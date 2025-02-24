@@ -1,0 +1,99 @@
+import openai
+import pandas as pd
+import time
+import os
+
+# ✅ 1. Postavi API ključ
+api_key = "xxxxxxxxxxxxxxxxxxxxxxxx"  # Zameni sa svojim API ključem
+client = openai.OpenAI(api_key=api_key)
+
+# ✅ 2. Učitaj CSV fajl sa grupisanim imenicama
+file_path = "D:/Python/PythonProjects/stanza filtering abstracts/primary filtering into N, ADJ, X, PROPN/2021/grouped_nouns.csv"
+
+print("🔹 Pokušavam da učitam fajl...")
+df = pd.read_csv(file_path)
+
+# ✅ 3. Ukloni duplikate iz kolone "lemma"
+lemmas = df["lemma"].drop_duplicates().tolist()
+print(f"✅ Učitano {len(lemmas)} unikatnih lema.")
+
+# ✅ 4. Podešavanje batch-ova i output fajla
+batch_size = 10  # 🔥 SADA KORISTIMO BATCH OD 10 REČI
+output_file = "anglicisms_analysis1.csv"
+
+# ✅ 5. Ako CSV ne postoji, kreiraj prazan fajl sa zaglavljem
+if not os.path.exists(output_file):
+    print(f"🔹 Fajl {output_file} ne postoji, kreiram ga sada...")
+    df_empty = pd.DataFrame(columns=["Lemma", "IsAnglicism", "EnglishWord", "Probability", "Etymology"])
+    df_empty.to_csv(output_file, mode='w', index=False, encoding="utf-8")
+    print("✅ Fajl uspešno kreiran!")
+
+# ✅ 6. Učitaj već analizirane reči
+df_existing = pd.read_csv(output_file)
+analyzed_lemmas = set(df_existing["Lemma"].tolist())
+print(f"✅ Već analizirano {len(analyzed_lemmas)} reči.")
+
+# ✅ 7. Filtriraj samo reči koje nisu analizirane
+new_lemmas = [lemma for lemma in lemmas if lemma not in analyzed_lemmas]
+print(f"✅ Ukupno novih reči za analizu: {len(new_lemmas)}")
+
+# 🛑 Ako nema novih reči, završi program
+if len(new_lemmas) == 0:
+    print("✅ Nema novih reči za analizu. Program završava rad.")
+    exit()
+
+# ✅ 8. Funkcija za analizu batch-a
+def analyze_lemmas_batch(lemmas):
+    results = []
+
+    for lemma in lemmas:
+        print(f"🔹 Analiziram reč: {lemma}")
+
+        prompt = f"""
+        Odgovori kratko na sledeća pitanja o srpskoj imenici "{lemma}":
+
+        1. Da li je anglicizam? Odgovori sa: "Da", "Možda" ili "Ne".
+           (Da: >70%, Možda: 30-70%, Ne: <30%)
+        2. Ako je anglicizam ili možda anglicizam, iz koje engleske reči dolazi?
+        3. Koliko je verovatno da je anglicizam (0-100%)?
+        4. Etimologija u maksimalno 10 reči (npr. "iz latinskog, preko engleskog").
+        """
+
+        try:
+            response = client.chat.completions.create(
+                model="gpt-4-turbo",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.7
+            )
+
+            result_text = response.choices[0].message.content
+            print(f"✅ API odgovor za '{lemma}': {result_text[:100]}...")  # Prikazuje prvih 100 karaktera odgovora
+
+            # Parsiranje podataka iz odgovora
+            lines = result_text.split("\n")
+            is_anglicism = lines[0].split(":")[-1].strip() if len(lines) > 0 else "Greška"
+            english_word = lines[1].split(":")[-1].strip() if len(lines) > 1 else "N/A"
+            probability = lines[2].split(":")[-1].strip() if len(lines) > 2 else "N/A"
+            etymology = lines[3].split(":")[-1].strip() if len(lines) > 3 else "N/A"
+
+            results.append((lemma, is_anglicism, english_word, probability, etymology))
+
+        except Exception as e:
+            print(f"❌ Greška pri obradi '{lemma}': {e}")
+            results.append((lemma, "Greška", "N/A", "N/A", "Greška u obradi"))
+
+        time.sleep(0.5)  # Pauza za optimizaciju API zahteva
+
+    # ✅ 9. Snimi rezultate odmah u CSV
+    df_results = pd.DataFrame(results, columns=["Lemma", "IsAnglicism", "EnglishWord", "Probability", "Etymology"])
+    df_results.to_csv(output_file, mode='a', header=False, index=False, encoding="utf-8")
+    print(f"✅ {len(results)} novih reči sačuvano u {output_file}!")
+
+# ✅ 10. Pokreni analizu u batch-ovima
+for i in range(0, len(new_lemmas), batch_size):
+    batch = new_lemmas[i:i + batch_size]
+    analyze_lemmas_batch(batch)
+    print(f"✅ Obradili smo batch {i + 1}-{i + batch_size}, rezultati su sačuvani!")
+
+print("✅ Analiza završena! Rezultati su u 'anglicisms_analysis.csv'")
+
