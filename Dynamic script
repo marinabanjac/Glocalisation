@@ -1,0 +1,103 @@
+import pandas as pd
+import keyboard  # Detects keypresses
+from colorama import init, Fore
+
+# Initialize colorama for colored terminal output
+init(autoreset=True)
+
+# Define file paths
+input_file = "sorted_nouns_2021.csv"
+output_file_valid = "validated_nouns.csv"
+output_file_excluded = "excluded_nouns.csv"
+
+# Load the CSV file
+df = pd.read_csv(input_file)
+
+# Add a new column for corrected lemmas if it doesn’t exist
+if "ispravljena lemma" not in df.columns:
+    df["ispravljena lemma"] = df["lemma"]
+
+# Track validated and corrected lemmas
+validated_lemmas = {}
+excluded_rows = []
+history = []
+current_index = 0
+
+# Function to display progress
+def show_progress(index, total):
+    print(f"\n{Fore.YELLOW}Progress: {index + 1}/{total} ({round((index + 1) / total * 100, 2)}%)")
+
+# Start interactive review
+total_rows = len(df)
+
+while current_index < total_rows:
+    row = df.iloc[current_index]
+    text = row["text"]
+    lemma = row["lemma"]
+
+    # Apply previously validated or corrected lemmas automatically
+    if (text, lemma) in validated_lemmas:
+        df.at[current_index, "ispravljena lemma"] = validated_lemmas[(text, lemma)]
+        current_index += 1
+        continue
+
+    # Display the current word in the terminal
+    print(f"\n{Fore.CYAN}Word: {text} | Current Lemma: {lemma}")
+    print(f"{Fore.YELLOW}Options: [ENTER = Confirm] | [Type New Lemma = Correct] | [X = Exclude] | [BACKSPACE = Previous]")
+
+    user_input = ""
+
+    while True:
+        event = keyboard.read_event()
+
+        if event.event_type == keyboard.KEY_DOWN:
+            if event.name == "enter":
+                if user_input:
+                    # User has typed a correction, save it
+                    corrected_lemma = user_input
+                    validated_lemmas[(text, lemma)] = corrected_lemma
+                    df.at[current_index, "ispravljena lemma"] = corrected_lemma
+                    print(f"{Fore.YELLOW}✏ Lemma corrected: {text} → {corrected_lemma}")
+                else:
+                    # If no input, confirm existing lemma
+                    validated_lemmas[(text, lemma)] = lemma
+                    print(f"{Fore.GREEN}✅ Lemma confirmed: {lemma}")
+                
+                # Store history for backtracking
+                history.append(current_index)
+                break
+            
+            elif event.name == "x":
+                # X: Mark as excluded
+                excluded_rows.append(row)
+                print(f"{Fore.RED}❌ Marked as excluded: {text}")
+                history.append(current_index)
+                break
+
+            elif event.name == "backspace":
+                if user_input:
+                    # Remove last character from user input
+                    user_input = user_input[:-1]
+                    print(f"\r{Fore.YELLOW}Typing new lemma: {user_input} ", end="", flush=True)
+                elif history:
+                    # BACKSPACE: Go back one row if possible
+                    current_index = history.pop()
+                    print(f"\n{Fore.MAGENTA}↩ Returning to previous word...")
+                continue
+            
+            else:
+                # Capture typed input (stores the correction)
+                user_input += event.name
+                print(f"\r{Fore.YELLOW}Typing new lemma: {user_input} ", end="", flush=True)
+
+    # Move to the next word
+    current_index += 1
+    show_progress(current_index, total_rows)
+
+# Save results
+df.to_csv(output_file_valid, index=False)
+pd.DataFrame(excluded_rows).to_csv(output_file_excluded, index=False)
+
+print(f"\n{Fore.GREEN}✅ Review completed!")
+print(f"{Fore.GREEN}✅ Saved: {output_file_valid} (validated words)")
+print(f"{Fore.RED}✅ Saved: {output_file_excluded} (excluded words)")
